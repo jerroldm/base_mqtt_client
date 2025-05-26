@@ -1,0 +1,23 @@
+# ESP-IDF build artifacts
+build/
+sdkconfig.old
+sdkconfig.defaults
+managed_components/
+dependencies.lock
+
+# Git and editor files
+.git/
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Python and environment files
+__pycache__/
+*.pyc
+.env
+venv/
+
+# macOS and Linux temp files
+.DS_Store
+*.bak
