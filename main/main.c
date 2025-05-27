@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <inttypes.h>
 #include <esp_log.h>
 #include <nvs_flash.h>
 #include <driver/gpio.h>
@@ -14,9 +15,14 @@
 static const char *TAG = "ESP32_Client";
 static const int LED_PIN = 2; // Adjust to your LED GPIO pin
 static bool led_state = false;
-#define KIOSK_NAME "Kiosk 4" // Change to "Kiosk 2", etc., for other clients
+#define KIOSK_NAME "Kiosk 1" // Change to "Kiosk 2", etc., for other clients
 static esp_mqtt_client_handle_t mqtt_client;
 static bool wifi_connected = false;
+
+static void log_stack_usage(const char *task_name, TaskHandle_t task_handle) {
+    UBaseType_t high_water_mark = uxTaskGetStackHighWaterMark(task_handle);
+    ESP_LOGI(TAG, "%s stack high water mark: %u bytes", task_name, high_water_mark * sizeof(StackType_t));
+}
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
@@ -33,12 +39,15 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
 }
 
 static void heartbeat_task(void *pvParameters) {
-    while (1) {
+    TaskHandle_t task_handle = xTaskGetCurrentTaskHandle();
+    while (true) {
         if (mqtt_client && wifi_connected) {
-            char topic[64];
+            static char topic[64]; // Static to reduce stack usage
             snprintf(topic, sizeof(topic), "esp32/kiosk/%s/heartbeat", KIOSK_NAME);
             esp_mqtt_client_publish(mqtt_client, topic, "alive", 0, 1, 0);
             ESP_LOGI(TAG, "Published heartbeat to %s", topic);
+            log_stack_usage("Heartbeat", task_handle);
+            ESP_LOGI(TAG, "Free heap: %" PRIu32 " bytes", esp_get_free_heap_size());
         }
         vTaskDelay(pdMS_TO_TICKS(10000)); // Heartbeat every 10 seconds
     }
@@ -53,8 +62,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             snprintf(topic, sizeof(topic), "esp32/kiosk/%s/led", KIOSK_NAME);
             esp_mqtt_client_subscribe(event->client, topic, 1);
             ESP_LOGI(TAG, "Subscribed to %s", topic);
-
-            mqtt_client = event->client;
 
             // Send initial announcement
             esp_netif_ip_info_t ip_info;
@@ -76,7 +83,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             break;
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGW(TAG, "MQTT disconnected from broker");
-            mqtt_client = NULL;
             break;
         case MQTT_EVENT_DATA:
             ESP_LOGI(TAG, "MQTT data received, topic: %.*s, data: %.*s",
@@ -85,6 +91,14 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 led_state = !led_state;
                 gpio_set_level(LED_PIN, led_state);
                 ESP_LOGI(TAG, "LED toggled to %d", led_state);
+            } else if (strncmp(event->data, "on", event->data_len) == 0) {
+                led_state = 1;
+                gpio_set_level(LED_PIN, led_state);
+                ESP_LOGI(TAG, "LED set to ON");
+            } else if (strncmp(event->data, "off", event->data_len) == 0) {
+                led_state = 0;
+                gpio_set_level(LED_PIN, led_state);
+                ESP_LOGI(TAG, "LED set to OFF");
             }
             break;
         case MQTT_EVENT_ERROR:
@@ -125,15 +139,11 @@ void app_main(void) {
         .sta = {
             .ssid = "ESP32_Network",
             .password = "password123",
+            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
         },
     };
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
-
-    // Wait for Wi-Fi connection
-    while (!wifi_connected) {
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
 
     // Initialize MQTT client
     esp_mqtt_client_config_t mqtt_cfg = {
@@ -149,7 +159,5 @@ void app_main(void) {
     esp_mqtt_client_start(mqtt_client);
 
     // Start heartbeat task
-    xTaskCreate(heartbeat_task, "heartbeat_task", 2048, NULL, 5, NULL);
-
-    vTaskDelete(NULL);
+    xTaskCreate(heartbeat_task, "heartbeat_task", 4096, NULL, 5, NULL);
 }
