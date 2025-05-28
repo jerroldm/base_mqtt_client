@@ -4,6 +4,7 @@
 #include <esp_log.h>
 #include <nvs_flash.h>
 #include <driver/gpio.h>
+#include "led_strip.h"
 #include <esp_wifi.h>
 #include <esp_netif.h>
 #include <esp_event.h>
@@ -12,12 +13,47 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-static const char *TAG = "ESP32_Client";
-static const int LED_PIN = 2; // Adjust to your LED GPIO pin
-static bool led_state = false;
 #define KIOSK_NAME "Kiosk 5" // Change to "Kiosk 2", etc., for other clients
+
+static const char *TAG = "ESP32_Client";
+static bool led_state = false;
 static esp_mqtt_client_handle_t mqtt_client;
 static bool wifi_connected = false;
+
+//----------------------------------------
+static led_strip_handle_t led_strip;
+#define LED_STRIP_GPIO 48 // Onboard RGB LED on ESP32-S3-DevKitC-1 v1.1
+
+static void configure_led(void)
+{
+    /* LED strip initialization with the GPIO and pixels number*/
+    led_strip_config_t strip_config = {
+        .strip_gpio_num = LED_STRIP_GPIO,
+        .max_leds = 1,
+    };
+    led_strip_rmt_config_t rmt_config = {
+        .resolution_hz = 10 * 1000 * 1000, // 10MHz
+        .flags.with_dma = false,
+    };
+    ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
+    /* Set all LED off to clear all pixels */
+    led_strip_clear(led_strip);
+}
+
+static void set_led_state(bool state) {
+    if (state) {
+        // Set RGB to white (low intensity to avoid bright glare)
+        //                                                R   G  B
+        ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 0, 16, 0));
+    } else {
+        // Clear RGB LED
+        ESP_ERROR_CHECK(led_strip_clear(led_strip));
+    }
+    ESP_ERROR_CHECK(led_strip_refresh(led_strip));
+    ESP_LOGI(TAG, "RGB LED set to %s", state ? "on" : "off");
+}
+//----------------------------------------
+
 
 static void log_stack_usage(const char *task_name, TaskHandle_t task_handle) {
     UBaseType_t high_water_mark = uxTaskGetStackHighWaterMark(task_handle);
@@ -92,15 +128,15 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             if (strncmp(event->topic, "esp32/kiosk/" KIOSK_NAME "/led", event->topic_len) == 0) {
                 if (strncmp(event->data, "toggle", event->data_len) == 0) {
                     led_state = !led_state;
-                    gpio_set_level(LED_PIN, led_state);
+                    set_led_state(led_state);
                     ESP_LOGI(TAG, "LED toggled to %d", led_state);
                 } else if (strncmp(event->data, "on", event->data_len) == 0) {
                     led_state = 1;
-                    gpio_set_level(LED_PIN, led_state);
+                    set_led_state(led_state);
                     ESP_LOGI(TAG, "LED turned on");
                 } else if (strncmp(event->data, "off", event->data_len) == 0) {
                     led_state = 0;
-                    gpio_set_level(LED_PIN, led_state);
+                    set_led_state(led_state);
                     ESP_LOGI(TAG, "LED turned off");
                 }
                 if (wifi_connected) {
@@ -138,10 +174,8 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
-    // Initialize LED GPIO
-    gpio_reset_pin(LED_PIN);
-    gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(LED_PIN, led_state);
+    // Initialize RGB LED
+    configure_led();
 
     // Initialize Wi-Fi
     esp_netif_init();
