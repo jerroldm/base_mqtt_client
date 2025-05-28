@@ -15,7 +15,7 @@
 static const char *TAG = "ESP32_Client";
 static const int LED_PIN = 2; // Adjust to your LED GPIO pin
 static bool led_state = false;
-#define KIOSK_NAME "Kiosk 1" // Change to "Kiosk 2", etc., for other clients
+#define KIOSK_NAME "Kiosk 5" // Change to "Kiosk 2", etc., for other clients
 static esp_mqtt_client_handle_t mqtt_client;
 static bool wifi_connected = false;
 
@@ -53,52 +53,72 @@ static void heartbeat_task(void *pvParameters) {
     }
 }
 
+static void led_status_task(void *pvParameters) {
+    TaskHandle_t task_handle = xTaskGetCurrentTaskHandle();
+    while (true) {
+        if (mqtt_client && wifi_connected) {
+            char topic[64];
+            snprintf(topic, sizeof(topic), "esp32/kiosk/%s/led_status", KIOSK_NAME);
+            const char *status = led_state ? "on" : "off";
+            esp_mqtt_client_publish(mqtt_client, topic, status, 0, 1, 0);
+            ESP_LOGI(TAG, "Published LED status to %s: %s", topic, status);
+            log_stack_usage("LED Status", task_handle);
+        }
+        vTaskDelay(pdMS_TO_TICKS(5000)); // Report every 5 seconds
+    }
+}
+
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
     esp_mqtt_event_handle_t event = event_data;
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "MQTT connected to broker");
-            char topic[64];
-            snprintf(topic, sizeof(topic), "esp32/kiosk/%s/led", KIOSK_NAME);
-            esp_mqtt_client_subscribe(event->client, topic, 1);
-            ESP_LOGI(TAG, "Subscribed to %s", topic);
-
-            // Send initial announcement
+            esp_mqtt_client_subscribe(mqtt_client, "esp32/kiosk/" KIOSK_NAME "/led", 1);
+            esp_mqtt_client_subscribe(mqtt_client, "esp32/request_announce", 1);
+            // Publish initial announcement
             esp_netif_ip_info_t ip_info;
-            esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-            if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK && ip_info.ip.addr != 0) {
-                char ip_str[16];
-                snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
-                cJSON *json = cJSON_CreateObject();
-                cJSON_AddStringToObject(json, "name", KIOSK_NAME);
-                cJSON_AddStringToObject(json, "ip", ip_str);
-                char *message = cJSON_PrintUnformatted(json);
-                esp_mqtt_client_publish(event->client, "devices/announce", message, 0, 1, 0);
-                ESP_LOGI(TAG, "Published initial announcement: %s", message);
-                cJSON_Delete(json);
-                free(message);
-            } else {
-                ESP_LOGW(TAG, "Skipping initial announcement: invalid IP");
-            }
+            esp_netif_get_ip_info(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"), &ip_info);
+            char ip_str[16];
+            snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
+            char announce_topic[64];
+            snprintf(announce_topic, sizeof(announce_topic), "esp32/kiosk/%s/announce", KIOSK_NAME);
+            esp_mqtt_client_publish(mqtt_client, announce_topic, ip_str, 0, 1, 0);
+            ESP_LOGI(TAG, "Published IP: %s to %s", ip_str, announce_topic);
             break;
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGW(TAG, "MQTT disconnected from broker");
             break;
         case MQTT_EVENT_DATA:
-            ESP_LOGI(TAG, "MQTT data received, topic: %.*s, data: %.*s",
-                     event->topic_len, event->topic, event->data_len, event->data);
-            if (strncmp(event->data, "toggle", event->data_len) == 0) {
-                led_state = !led_state;
-                gpio_set_level(LED_PIN, led_state);
-                ESP_LOGI(TAG, "LED toggled to %d", led_state);
-            } else if (strncmp(event->data, "on", event->data_len) == 0) {
-                led_state = 1;
-                gpio_set_level(LED_PIN, led_state);
-                ESP_LOGI(TAG, "LED set to ON");
-            } else if (strncmp(event->data, "off", event->data_len) == 0) {
-                led_state = 0;
-                gpio_set_level(LED_PIN, led_state);
-                ESP_LOGI(TAG, "LED set to OFF");
+            if (strncmp(event->topic, "esp32/kiosk/" KIOSK_NAME "/led", event->topic_len) == 0) {
+                if (strncmp(event->data, "toggle", event->data_len) == 0) {
+                    led_state = !led_state;
+                    gpio_set_level(LED_PIN, led_state);
+                    ESP_LOGI(TAG, "LED toggled to %d", led_state);
+                } else if (strncmp(event->data, "on", event->data_len) == 0) {
+                    led_state = 1;
+                    gpio_set_level(LED_PIN, led_state);
+                    ESP_LOGI(TAG, "LED turned on");
+                } else if (strncmp(event->data, "off", event->data_len) == 0) {
+                    led_state = 0;
+                    gpio_set_level(LED_PIN, led_state);
+                    ESP_LOGI(TAG, "LED turned off");
+                }
+                if (wifi_connected) {
+                    char status_topic[64];
+                    snprintf(status_topic, sizeof(status_topic), "esp32/kiosk/%s/led_status", KIOSK_NAME);
+                    const char *status = led_state ? "on" : "off";
+                    esp_mqtt_client_publish(mqtt_client, status_topic, status, 0, 1, 0);
+                    ESP_LOGI(TAG, "Published LED status on change to %s: %s", status_topic, status);
+                }
+            } else if (strncmp(event->topic, "esp32/request_announce", event->topic_len) == 0) {
+                esp_netif_ip_info_t ip_info;
+                esp_netif_get_ip_info(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"), &ip_info);
+                char ip_str[16];
+                snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
+                char announce_topic[64];
+                snprintf(announce_topic, sizeof(announce_topic), "esp32/kiosk/%s/announce", KIOSK_NAME);
+                esp_mqtt_client_publish(mqtt_client, announce_topic, ip_str, 0, 1, 0);
+                ESP_LOGI(TAG, "Published IP: %s to %s on announce request", ip_str, announce_topic);
             }
             break;
         case MQTT_EVENT_ERROR:
@@ -160,4 +180,6 @@ void app_main(void) {
 
     // Start heartbeat task
     xTaskCreate(heartbeat_task, "heartbeat_task", 4096, NULL, 5, NULL);
+    // Start led_status task
+    xTaskCreate(led_status_task, "led_status_task", 4096, NULL, 5, NULL);
 }
