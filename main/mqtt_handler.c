@@ -63,7 +63,7 @@ void led_status_task(void *pvParameters)
 {
     TaskHandle_t task_handle = xTaskGetCurrentTaskHandle();
     TickType_t last_wake_time = xTaskGetTickCount();
-    const TickType_t status_interval = pdMS_TO_TICKS(5000);
+    const TickType_t status_interval = pdMS_TO_TICKS(5000);     // Update status every 5s
 
     while (true) {
         if (mqtt_connected && wifi_connected) {
@@ -121,12 +121,13 @@ void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event
                     ESP_LOGI(TAG, "LED turned off");
                     publish_status = true;
                 }
+
                 if (publish_status && mqtt_connected && wifi_connected) {
                     char status_topic[64];
                     snprintf(status_topic, sizeof(status_topic), "esp32/kiosk/%s/led_status", KIOSK_NAME);
                     const char *status = led_state ? "on" : "off";
-                    esp_mqtt_client_enqueue(mqtt_client, status_topic, status, 0, 1, 0, false);
-                    ESP_LOGI(TAG, "Enqueued LED status on change to %s: %s", status_topic, status);
+                    esp_mqtt_client_enqueue(mqtt_client, status_topic, status, 0, 0, 0, true);
+                    ESP_LOGI(TAG, "Immediate LED status update enqueued to %s: %s", status_topic, status);
                 }
             } else if (strncmp(event->topic, "esp32/request_announce", event->topic_len) == 0) {
                 esp_netif_ip_info_t ip_info;
