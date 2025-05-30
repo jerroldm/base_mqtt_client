@@ -12,6 +12,8 @@
 #define WIFI_CONNECTED_BIT BIT0
 #define MQTT_CONNECTED_BIT BIT1
 
+#define BUTTON_GPIO GPIO_NUM_0
+
 // External global variables
 extern esp_mqtt_client_handle_t mqtt_client;
 extern bool wifi_connected;
@@ -23,5 +25,6 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id
 void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
 void heartbeat_task(void *pvParameters);
 void led_status_task(void *pvParameters);
+void button_task(void *pvParameters);
 
 #endif // MQTT_HANDLER_H

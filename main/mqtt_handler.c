@@ -5,9 +5,12 @@
 #include <esp_wifi.h>
 #include <esp_netif.h>
 #include <esp_event.h>
+#include <driver/gpio.h>
+#include <cJSON.h>
 #include "config.h"
 #include "mqtt_handler.h"
 #include "led_control.h"
+#include "esp_random.h"
 
 static const char *TAG = CONFIG_TAG;        // Defined in config.h
 
@@ -77,6 +80,69 @@ void led_status_task(void *pvParameters)
         vTaskDelayUntil(&last_wake_time, status_interval);
     }
 }
+
+// --------------------------------------------------------------------------------
+// Button Task
+// --------------------------------------------------------------------------------
+#include <driver/gpio.h>
+#include <string.h>
+#include <cJSON.h> // Add cJSON for JSON formatting
+#include <esp_random.h> // For random 4-digit value (if needed)
+
+#define BUTTON_GPIO GPIO_NUM_0
+
+void button_task(void *pvParameters)
+{
+    TaskHandle_t task_handle = xTaskGetCurrentTaskHandle();
+    TickType_t last_wake_time = xTaskGetTickCount();
+    const TickType_t debounce_interval = pdMS_TO_TICKS(50); // 50ms debounce
+    bool last_button_state = true; // Assume button not pressed (pull-up, active-low)
+
+    while (true) {
+        bool current_button_state = gpio_get_level(BUTTON_GPIO);
+
+        // Detect button press (simulating * or #)
+        if (last_button_state && !current_button_state) {
+            if (mqtt_connected && wifi_connected) {
+                char topic[64];
+                snprintf(topic, sizeof(topic), "esp32/kiosk/%s/button", KIOSK_NAME);
+
+                // Create JSON payload
+                cJSON *root = cJSON_CreateObject();
+
+                // Generate 7 digit number
+                char seven_digit_str[8];
+                uint32_t seven_digit_value = esp_random() % 10000000; // Random number between 0 and 9999999
+                snprintf(seven_digit_str, sizeof(seven_digit_str), "%07" PRIu32, seven_digit_value);
+                cJSON_AddStringToObject(root, "seven_digit", seven_digit_str);
+
+                // Generate or set the 4-digit value (example: random 0000-9999)
+                char four_digit_str[5];
+                uint32_t four_digit_value = esp_random() % 10000; // Random 4-digit value
+                snprintf(four_digit_str, sizeof(four_digit_str), "%04" PRIu32, four_digit_value);
+                cJSON_AddStringToObject(root, "four_digit", four_digit_str);
+
+                char *payload = cJSON_PrintUnformatted(root);
+                if (payload) {
+                    esp_mqtt_client_enqueue(mqtt_client, topic, payload, 0, 1, 0, false);
+                    ESP_LOGI(TAG, "Enqueued JSON to %s: %s", topic, payload);
+                    cJSON_free(payload); // Free the JSON string
+                } else {
+                    ESP_LOGE(TAG, "Failed to create JSON payload");
+                }
+                cJSON_Delete(root); // Free the JSON object
+                log_stack_usage("Button", task_handle);
+
+                // Reset buffer and counter
+                ESP_LOGI(TAG, "Buffer reset, ready for new input");
+            }
+        }
+
+        last_button_state = current_button_state;
+        vTaskDelayUntil(&last_wake_time, debounce_interval);
+    }
+}
+// --------------------------------------------------------------------------------
 
 void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {

@@ -6,6 +6,7 @@
 #include <mqtt_client.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
+#include <driver/gpio.h>
 #include "led_control.h"
 #include "mqtt_handler.h"
 #include "config.h"
@@ -31,6 +32,16 @@ void app_main(void)
 
     // Initialize RGB LED
     configure_led();
+
+    // Initialize button GPIO
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << BUTTON_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
 
     // Initialize WiFi
     ESP_ERROR_CHECK(esp_netif_init());
@@ -79,4 +90,5 @@ void app_main(void)
     // Start tasks
     xTaskCreate(heartbeat_task, "heartbeat_task", 3072, NULL, 5, NULL);
     xTaskCreate(led_status_task, "led_status_task", 3072, NULL, 5, NULL);
+    xTaskCreate(button_task, "button_task", 3072, NULL, 5, NULL);
 }
