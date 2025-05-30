@@ -10,7 +10,7 @@
 #include "config.h"
 #include "mqtt_handler.h"
 #include "led_control.h"
-#include "esp_random.h"
+#include <esp_random.h> // For random 4-digit value (if needed)
 
 static const char *TAG = CONFIG_TAG;        // Defined in config.h
 
@@ -20,12 +20,20 @@ bool wifi_connected = false;
 bool mqtt_connected = false;
 EventGroupHandle_t connectivity_event_group;
 
+// --------------------------------------------------------------------------------
+// Log Stack Usage (Debugging)
+// --------------------------------------------------------------------------------
 static void log_stack_usage(const char *task_name, TaskHandle_t task_handle)
 {
     UBaseType_t high_water_mark = uxTaskGetStackHighWaterMark(task_handle);
     ESP_LOGI(TAG, "%s stack high water mark: %u bytes", task_name, high_water_mark * sizeof(StackType_t));
 }
+// --------------------------------------------------------------------------------
 
+
+// --------------------------------------------------------------------------------
+// Wifi Event Handler
+// --------------------------------------------------------------------------------
 void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
@@ -42,7 +50,12 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id
         xEventGroupSetBits(connectivity_event_group, WIFI_CONNECTED_BIT);
     }
 }
+// --------------------------------------------------------------------------------
 
+
+// --------------------------------------------------------------------------------
+// Heartbeat Task
+// --------------------------------------------------------------------------------
 void heartbeat_task(void *pvParameters)
 {
     TaskHandle_t task_handle = xTaskGetCurrentTaskHandle();
@@ -61,7 +74,12 @@ void heartbeat_task(void *pvParameters)
         vTaskDelayUntil(&last_wake_time, heartbeat_interval);
     }
 }
+// --------------------------------------------------------------------------------
 
+
+// --------------------------------------------------------------------------------
+// LED Status Task
+// --------------------------------------------------------------------------------
 void led_status_task(void *pvParameters)
 {
     TaskHandle_t task_handle = xTaskGetCurrentTaskHandle();
@@ -80,17 +98,12 @@ void led_status_task(void *pvParameters)
         vTaskDelayUntil(&last_wake_time, status_interval);
     }
 }
+// --------------------------------------------------------------------------------
+
 
 // --------------------------------------------------------------------------------
 // Button Task
 // --------------------------------------------------------------------------------
-#include <driver/gpio.h>
-#include <string.h>
-#include <cJSON.h> // Add cJSON for JSON formatting
-#include <esp_random.h> // For random 4-digit value (if needed)
-
-#define BUTTON_GPIO GPIO_NUM_0
-
 void button_task(void *pvParameters)
 {
     TaskHandle_t task_handle = xTaskGetCurrentTaskHandle();
@@ -114,13 +127,13 @@ void button_task(void *pvParameters)
                 char seven_digit_str[8];
                 uint32_t seven_digit_value = esp_random() % 10000000; // Random number between 0 and 9999999
                 snprintf(seven_digit_str, sizeof(seven_digit_str), "%07" PRIu32, seven_digit_value);
-                cJSON_AddStringToObject(root, "seven_digit", seven_digit_str);
+                cJSON_AddStringToObject(root, "user_id", seven_digit_str);
 
                 // Generate or set the 4-digit value (example: random 0000-9999)
                 char four_digit_str[5];
                 uint32_t four_digit_value = esp_random() % 10000; // Random 4-digit value
                 snprintf(four_digit_str, sizeof(four_digit_str), "%04" PRIu32, four_digit_value);
-                cJSON_AddStringToObject(root, "four_digit", four_digit_str);
+                cJSON_AddStringToObject(root, "pin", four_digit_str);
 
                 char *payload = cJSON_PrintUnformatted(root);
                 if (payload) {
@@ -144,6 +157,10 @@ void button_task(void *pvParameters)
 }
 // --------------------------------------------------------------------------------
 
+
+// --------------------------------------------------------------------------------
+// MQTT Event Handler
+// --------------------------------------------------------------------------------
 void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
     esp_mqtt_event_handle_t event = event_data;
@@ -213,3 +230,4 @@ void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event
             break;
     }
 }
+// --------------------------------------------------------------------------------

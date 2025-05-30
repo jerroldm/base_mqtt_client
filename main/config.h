@@ -8,4 +8,6 @@
 #define MQTT_BROKER_PORT 1883
 #define CONFIG_TAG "ESP32_Client"
 
+#define BUTTON_GPIO GPIO_NUM_0
+
 #endif // CONFIG_H
